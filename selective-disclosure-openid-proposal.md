@@ -86,7 +86,7 @@ In this document, selective disclosure is achieved by "pre-generation of atomic 
 
 A verifiable credential has the following structure:
 
-![Basic VC Structure](img/vc-structure.png)
+![Basic VC Structure](./vc-structure.png)
 
 In this proposal, each claim is separated out from the verifiable credential's metadata and proofs, into a dedicated object we're calling a **verifiable claim** (we're taking other suggestions). The value of each attribute in a verifiable credential is a hash of a verifiable claim.
 
