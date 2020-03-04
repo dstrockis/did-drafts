@@ -113,7 +113,7 @@ Note that in this example, each verifiable claim only contains a single key-valu
 
 The issuer then structures all claims in the credential into a merkle tree.
 
-![claim-tree](./claim-merkle)
+![claim-tree](./claim-merkle.png)
 
 The merkle root value is recorded in the verifiable credential, represented here in the JWT proof format. 
 
