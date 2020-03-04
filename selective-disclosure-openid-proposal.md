@@ -51,17 +51,18 @@ The remainder of this document will use the example of a digital driver's licens
 3. Present just the fact that the subject is over 21 years of age.
 4. Present serveral attributes of the driver's license: height, weight, and gender.
 
-For full disclosure, our team at Microsoft has not yet implemented this proposal. We are hoping that by sharing it early, we can collaborate with DIF to produce an implementation that many can benefit from.
+For full disclosure, our team at Microsoft has not yet implemented this proposal. We are hoping that by sharing it early, we can collaborate with DIF to develop a standard protocol that many implementers can support.
 
 ### Background on OpenID Connect Self-Issued
 
-If you're familiar with the following prior art, you'll have a much easier time understanding the proposal that follows.
+If you're familiar with the following specifications, you'll have a much easier time understanding the proposal that follows.
 
 - [OpenID Connect Core Specification](https://openid.net/specs/openid-connect-core-1_0.html)
     - Chapters 5, 6, and 7 are particularly releveant.
 - [DIF's Self-Issued OpenID Connect Provider DID Profile](https://identity.foundation/did-siop/)
 - [OpenID Connect for Identity Assurance](https://openid.net/2019/11/14/openid-connect-for-identity-assurance/)
     - Section 5 introduces the `purpose` parameter, which is used in this proposal.
+- [OpenID Connect Form Post Response Mode](https://openid.net/specs/oauth-v2-form-post-response-mode-1_0.html)
 - [JSON Web Tokens](https://tools.ietf.org/html/rfc7519)
 - [W3C Verifiable Credentials Data Model](https://www.w3.org/TR/vc-data-model/)
     - Section 6.3 gives examples of a verifiable credential in JWT format.
@@ -80,7 +81,7 @@ This proposal does not use zero-knowledge techniques as a means of providing sel
 
 With that said, we recognize that there are many important use cases where the anonymity and privacy provided by zero-knowledge proofs is highly desireable. We're currently working with Microsoft Research to develop an implementation of verifiable credentials based on zero-knowlege techniques. Outside of this document, we're interested in working with the community to standardize presentation of zero-knowledge verifiable credentials.
 
-In this document, selective disclosure is achieved by "pre-generation of atomic credentials" (credit for that phrase goes to Mike Lodder). As the next section describes, we're proposing to decouple a verifiable claim from its verifiable credential, using hashes to link the two and enable selective disclosure while reducing the number of signatures produced.
+In this document, selective disclosure is achieved by "pre-generation of atomic credentials" (credit for that phrase goes to Mike Lodder). As the next section describes, we're proposing to decouple a verifiable claim from its verifiable credential, using hashes to link the two and enable selective disclosure while reducing the number of signatures produced. This proposal is very similar, in spirit, to the signature-per-attribute approach proposed by others.
 
 ## Credential Structure
 
@@ -88,9 +89,33 @@ A verifiable credential has the following structure:
 
 ![Basic VC Structure](./vc-structure.png)
 
-In this proposal, each claim is separated out from the verifiable credential's metadata and proofs, into a dedicated object we're calling a **verifiable claim** (we're taking other suggestions). The value of each attribute in a verifiable credential is a hash of a verifiable claim.
+In this proposal, each claim is separated out from the verifiable credential's metadata and proofs, into a dedicated object we're calling a **verifiable claim** (we're taking other suggestions). A verifiable claim is a JSON object with the following structure:
 
-Note that in this example, each claim only contains a single key-value pair of data. This is not a restriction; a claim may contain a rich set of data if the issuer so chooses.
+```
+{
+  "@context": "https://www.w3.org/2018/credentials/v1",
+  "@type": "VerifiableClaim",
+  "salt": "1b99aee8-64d4-471a-8d74-79691abc3bb0",
+  "claim": {
+    "birthDate": "09/24/91",
+  }
+}
+```
+
+| Parameter | Description |
+| --------- | ----------- |
+| `@context` | The context of the object, which is always `https://www.w3.org/2018/credentials/v1`. This may need to be modified to properly support JSON-LD. |
+| `@type` | The type of the object, which is always `VerifiableClaim`. This may need to be modified to properly support JSON-LD. |
+| `salt` | A randomization factor which is used to redact/disguise the hashed value of the claim. |
+| `claim` | The claim's unredacted value, which may include more than a single key-value pair. |
+
+Note that in this example, each verifiable claim only contains a single key-value pair of data. This is not a restriction; a claim may contain a rich set of data if the issuer so chooses.
+
+The issuer then structures all claims in the credential into a merkle tree.
+
+![claim-tree](./claim-merkle)
+
+The merkle root value is recorded in the verifiable credential, represented here in the JWT proof format. 
 
 ```
 // A verifiable credential in JWT format
@@ -113,14 +138,10 @@ Note that in this example, each claim only contains a single key-value pair of d
   "iat": 1541493724,
   "exp": 1573029723,
   "credentialSubject": {
-    "birthDate": {"claimHash": "jknagbiab4on2tn3...", "alg": "SHA256"},
-    "address": {"claimHash": "nnfad18931n134...", "alg": "SHA256"},
-    "motorClass": {"claimHash": "jklan2e232jfna..."}, "alg": "SHA256",
-    "name": {"claimHash": "xvncxvzvfdafqv..."}, "alg": "SHA256",
-    "gender": {"claimHash": "qeqreqtqgqrbbe...", "alg": "SHA256"},
-    "heightWeight": {"claimHash": "puiupjlknnkoj...", "alg": "SHA256"},
-    "dlNumber": {"claimHash": "j4892424jnj1243...", "alg": "SHA256"},
-    "isOver21": {"claimHash": "jldkne1ass4141...", "alg": "SHA256"},
+    "claimsRootHash": {
+      "value": "311d2e46f49b15fff8b746b74ad57f2cc9e0d9939fda9438...",
+      "alg": "SHA256"
+    }
   },
   ...
   "credentialStatus": {
@@ -149,33 +170,13 @@ zI3NmUxMmVjMjEiLCJqdGkiOiJodHRwOi8vZXhhbXBsZS5lZHUvY3JlZGVudGlhbHMvMzczMiIsImlzc
 | `iat` | The issuance time of the credential, per JWT specification. |
 | `exp` | The expiration time of the credential, per JWT specification. |
 | `credentialSubject` | Contains the contents of the credential, per W3C Verifiable Credentials specification. |
-| `credentialSubject.{attribute}` | Each attribute included in the credential, per W3C Verifiable Credentials specification section 6.3.  |
-| `credentialSubject.{attribute}.claimHash` | The hashed value of each verifiable claim, whose structure is described below.  |
-| `credentialSubject.{attribute}.alg` | The algorithm used to hash the verifiable claim.  |
+| `credentialSubject.claimsRootHash` | An object containing the merkle root of the verifiable claim merkle tree.  |
+| `credentialSubject.claimsRootHash.value` | The merkle root hash of the verifiable claim merkle tree.  |
+| `credentialSubject.claimsRootHash.alg` | The algorithm used to construct and verify the merkle tree.  |
 | `credentialStatus` | The revocation mechanism, per W3C Verifiable Credentials specification. |
 | signature | The digital signature of the issuer, as a JSON web signature. |
 
-The verifiable credential represented above is accompanied by a verifiable claim for each attribute in the credential. A verifiable credential takes the following format. 
-
-```
-{
-  "@context": "https://www.w3.org/2018/credentials/v1",
-  "@type": "VerifiableClaim",
-  "nonce": "1b99aee8-64d4-471a-8d74-79691abc3bb0",
-  "claim": {
-    "birthDate": "09/24/91",
-  }
-}
-```
-
-| Parameter | Description |
-| --------- | ----------- |
-| `@context` | The context of the object, which is always `https://www.w3.org/2018/credentials/v1`. This may need to be modified to properly support JSON-LD. |
-| `@type` | The type of the object, which is always `VerifiableClaim`. This may need to be modified to properly support JSON-LD. |
-| `nonce` | A randomization factor which is used to redact/disguise the hashed value of the claim. |
-| `claim` | The claim's unredacted value, which may include more than a single key-value pair. |
-
-With this credential structure, a holder can selectively present individual verifiable claims along with a verifiable credential, revealing only a subset of the credential's claims to the verifier. Upon presentation, the verifier can hash the verifiable claim and compare the result to the corresponding `claimHash` value in the verifiable credential.
+By decoupling the verifiable claims from the verifiable credential, a holder can selectively present individual verifiable claims to a verifier. In addition to each verifiable claim presented, the holder must also present the verifiable credential and the merkle proof for each verifiable claim to the veriifer. The verifier validates the merkle proof, comparing the calculated root hash value to the one recorded in the verifiable credential. If the values match, the verifier knows that the presented claims are members of the set of claims issued in the verifiable credential. Details of this protocol are described in the sections below.
 
 When compared to individually signed attributes, we believe this approach has two advantages:
 
@@ -231,7 +232,7 @@ The `request_uri` is then resolved, returning a presentation request in JWT form
             "https://stateagency.gov/DrivingLicenseCredential": {
                 "essential": "true",
                 "purpose": "To verify your age.",
-                "claims": ["isOver21", "heightWeight", "firstName"]
+                "claims": ["isOver21", "heightWeight", "address"]
             }
         }
     }
@@ -260,7 +261,7 @@ KLJo5GAyBND3LDTn9H7FQokEsUEi8jKwXhGvoN3JtRa51xrNDgXDb0cq1UTYB-rK4Ft9YVmR1NI_ZOF8
 | `registration.id_token_signed_response_alg` | The accepted algorithms for the presentation response, per DID SIOP specification. |
 | `claims` | Includes the claims requested by the verifier, which may include verifiable credentials. |
 | `claims.id_token` | Indicates that the requested claims should be returned in the resulting presentation response, per OpenID Connect specification. |
-| `claims.id_token.{schema-uri}` | The type of the requested verifiable credential as a URI.  |
+| `claims.id_token.{schema-uri}` | The type of the requested verifiable credential as a URI. Could be extended to allow DIDs as credential types as well.  |
 | `claims.id_token.{schema-uri}.essential` | Indicates if the requested credential is required or not, per the OpenID Connect specification. |
 | `claims.id_token.{schema-uri}.purpose` | Displayable string that describes the reason the verifier is requesting the credential, per OpenID Connect Identity Assurance draft. |
 | `claims.id_token.{schema-uri}.claims` | An array of attributes that are being requested from the selected credential. If this property is omitted, it is assumed that all attributes are requested. The available values of the array are inferred from the credential's schema. |
@@ -269,8 +270,7 @@ KLJo5GAyBND3LDTn9H7FQokEsUEi8jKwXhGvoN3JtRa51xrNDgXDb0cq1UTYB-rK4Ft9YVmR1NI_ZOF8
 
 ## Presentation Response
 
-The holder then returns a presentation response to the verifier.
-
+The holder then constructs and returns a presentation response (a.k.a. verifiable presentation) to the verifier, by sending the following JWT to the redirect URI provided above in the `client_id` parameter. Details of how the HTTP response is constructed are provided in the OpenID Connect specification. 
 
 ```
 // JWT header
@@ -302,9 +302,7 @@ The holder then returns a presentation response to the verifier.
    "_claim_sources": {
       "src1": {
         "JWT": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-        "birthDate": "eyJvdfgadgagagdbba...",
-        "heightWeight": "eyJhbjkfldan2f32q...",
-        "name": "eyJh901f3j41lf41l14..."
+        "VC": "eyJlkj151n175272nlnl4k1n4j1614614214..."
       }
    }
 }
@@ -330,9 +328,52 @@ jE1NDE0OTM3MjQsImV4cCI6MTU3MzAyOTcyMywibm9uY2UiOiI2NjAhNjM0NUZTZXIiLCJ2YyI6eyJAY
 | `did` | The DID of the subject, per DID SIOP specification. |
 | `_claims_names` | The requested claim types, with a reference to the claim sources where the claim values can be found, per OpenID Connect specification. |
 | `_claim_sources` | The values satisfying the requested claims & criteria, per OpenID Connect specification. |
-| `_claims_sources.{source}.JWT` | A verifiable credential satsifying the request, in JWT proof format. The key `JWT` is used here per the OpenID Connect specification. |
-| `_claim_sources.{source}.{claim}` | The verifiable claims satisfying the request, as base64 encoded JSON objects. These values can be hashed and compared to the `claimHash` value in the verifiable credential to ensure they are bound to the verifiable credential that has been presented. |
+| `_claims_sources.{source}.JWT` | An unsigned JWT that contains all verifiable claims in the presentation, along with their merkle proofs of membership. The details of this JWT are provided below. The key `JWT` is used here per the OpenID Connect specification. |
+| `_claims_sources.{source}.VC` | The verifiable credential that satisfies the request, in JWT proof format. The details of this JWT are provided in the sections above. |
 | signature | The digital signature of the holder, as a JSON web signature. |
+
+In the presentation response above, the disclosed verifiable claims have been bundled into an unsigned JWT that takes the following format:
+
+
+```
+// JWT header
+{
+  "alg": "none",
+  "typ": "JWT",
+}
+.
+// JWT payload
+{
+  "isOver21": {
+    "value": "eyJAY29udGV4dCI6Imh0dHBzOi8vd...",
+    "path": ["d6f80a4bbf9a5f1cb…", "b42b6393c1f5306…", 
+             "4465a5a438f69c…", "93c1f53060fe3ddb…", 
+             "b5553de315e0edf…", "311d2e46f49b15f…"]
+  },
+  "heightWeight": {
+    "value": "eyJAnninj1o4nj16lnj4l5n1...",
+    "path": ["3ac225168df54212a25…", "b5553de315e0edf…",
+             "93c1f53060fe3ddb…", "311d2e46f49b15f…"]
+  },
+  "address": {
+    "value": "eyJvlf4iapu8afnmlajnlfn42..",
+    "path": ["dafa5c4667fa618e…", "b42b6393c1f5306…",
+             "4465a5a438f69c…", "93c1f53060fe3ddb…",
+             "b5553de315e0edf…", "311d2e46f49b15f…"]
+  }
+}
+```
+
+| Parameter | Description |
+| --------- | ----------- |
+| `alg` | `none`, since this is an unsigned JWT that is only used to package the verifiable claims together. |
+| `typ` | Must be `JWT`, per OpenID Connect specification. |
+| `{attribute}` | The name of each attribute being disclosed in the verifiable credential. |
+| `{attribute}.value` | The verifiable claim, in base64 url encoded format. This encoding helps to ensure that the verifiable claim's hash can be easily re-calculated without any canonicalization errors. The verifier can decode this value in order to extract the raw value of the verifiable claim. |
+| `{attribute}.path` | The merkle path required to re-compute the root hash and test for membership to the verifiable claim. |
+
+
+Upon receiving this presentation response, the verifier can perform all standard verification checks for an id_token according to the OpenID Connect specification. The verifier also performs all standard verification checks for the verifiable credential, according to the verifiable credential specification. Lastly, the verifier tests the membership of each verifiable claim by re-computing the merkle root hash from the provided `path`, comparing the resulting value to the root hash recorded in the verifiable credential. 
 
 
 ## Future Work
@@ -342,5 +383,4 @@ The following are ideas for next steps and improvement upon this proposal.
 - Formalize the details of this proposal, and turn it into a proper specification. Several details remain unspecified, like the accepted hash algorithms for verifiable claims.
 - Work with the OpenID Foundation to make modifications to the existing specifications in support of verifiable credential features and scenarios. 
 - The proposal above is very limited in terms of the "criteria" that verifiers can specify in their presentation requests. Additional fields in the presentation request can be added to offer richer request functionality, akin to that proposed in the credential manifest proposals.
-- Some have suggested replacing the simple hashing scheme used in this proposal with a Merkle tree or other cryptographic means of testing the membership of a verifiable claim to a verifiable credential.
 - Incorporation of zero-knowledge proofs into the request & response protocol, if possible.
